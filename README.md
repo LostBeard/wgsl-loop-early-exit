@@ -40,7 +40,7 @@ is dropped at load when the adapter lacks `shader-f16`, nothing in the shader us
 ## Files
 
 - `index.html`: the page (requests the adapter, runs one dispatch, compares, prints the result).
-- `levelcost_while.wgsl`: the shader, as SpawnDev.ILGPU 5.4.46 generated it.
+- `levelcost_while.wgsl`: the shader, as SpawnDev.ILGPU 5.4.46 generated it (line endings normalized to LF).
 - `data.json`: inputs and the expected output.
 - `make_data.py`: how `data.json` was made from libwebp's tables (see NOTICE).
 
