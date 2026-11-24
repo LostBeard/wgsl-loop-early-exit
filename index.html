@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WGSL loop early exit</title>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --ok: #1a7f37; --bad: #cf222e; --muted: #57606a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3; --ok: #3fb950; --bad: #f85149; --muted: #8b949e; } }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 860px; padding: 16px; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>WGSL: a single-thread loop stops early</h1>
+<p>One compute dispatch, one active invocation. The shader computes a 6,528-entry cost table (VP8CalculateLevelCosts from
+libwebp): an outer <code>loop</code> over 96 tables and, per entry, an inner <code>loop</code> that runs while a bit
+pattern has bits left. The page compares the result with the same computation computed ahead of time
+(<code>data.json</code>). The shader is unmodified generated WGSL and validates with naga.</p>
+<p>Observed (2026-11-24): NVIDIA RTX 4070, Chromium (D3D12): 6528 of 6528 right. AMD Radeon RX 590, Chrome 158,
+D3D12, driver 31.0.21925.1001: 136 of 6528 right, first wrong at index 136 (got 0, expected 512).</p>
+<pre id="out">Running...</pre>
+<script type="module">
+const out = document.getElementById('out');
+const log = (s, cls) => { const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = s + '\n'; out.appendChild(span); };
+async function run() {
+  out.textContent = '';
+  if (!navigator.gpu) { log('WebGPU is not available in this browser.', 'bad'); return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { log('No WebGPU adapter.', 'bad'); return; }
+  const info = adapter.info || {};
+  log(`Adapter: ${info.vendor || '?'} ${info.architecture || ''} ${info.device || ''} ${info.description || ''}`.trim(), 'muted');
+  let code = await (await fetch('levelcost_while.wgsl')).text();
+  const features = [];
+  if (adapter.features.has('shader-f16')) features.push('shader-f16');
+  else code = code.replace('enable f16;', '');   // nothing in the shader uses f16
+  const device = await adapter.requestDevice({ requiredFeatures: features });
+  const data = await (await fetch('data.json')).json();
+  const mk = (arr, usage) => {
+    const b = device.createBuffer({ size: Math.max(16, arr.length * 4), usage, mappedAtCreation: true });
+    new Int32Array(b.getMappedRange()).set(arr); b.unmap(); return b;
+  };
+  const S = GPUBufferUsage.STORAGE, CS = GPUBufferUsage.COPY_SRC;
+  const coeffs = mk(data.coeffs, S);
+  const levelCost = mk(new Array(data.expected.length).fill(0), S | CS);
+  const t = mk(data.t, S);
+  const scalars = mk([1, 0, 0, 0], S);   // [0] = invocations that do work (1), [1..3] = view offsets (0)
+  const module = device.createShaderModule({ code });
+  const msgs = (await module.getCompilationInfo()).messages.filter(m => m.type === 'error');
+  if (msgs.length) { log('Shader errors:\n' + msgs.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n'), 'bad'); return; }
+  const pipeline = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+  const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [coeffs, levelCost, t, scalars].map((buffer, binding) => ({ binding, resource: { buffer } })) });
+  const read = device.createBuffer({ size: data.expected.length * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.dispatchWorkgroups(1); pass.end();
+  enc.copyBufferToBuffer(levelCost, 0, read, 0, data.expected.length * 4);
+  device.queue.submit([enc.finish()]);
+  await read.mapAsync(GPUMapMode.READ);
+  const got = new Int32Array(read.getMappedRange().slice(0));
+  let right = 0, first = -1;
+  for (let i = 0; i < got.length; i++) { if (got[i] === data.expected[i]) right++; else if (first < 0) first = i; }
+  log(`${right} of ${got.length} right` + (first < 0 ? '' : `; first wrong at index ${first} (table ${Math.floor(first / 68)}, entry ${first % 68}): got ${got[first]}, expected ${data.expected[first]}`), right === got.length ? 'ok' : 'bad');
+}
+run().catch(e => log('Error: ' + (e && e.message || e), 'bad'));
+</script>
+</body>
+</html>

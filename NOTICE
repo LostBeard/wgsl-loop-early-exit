@@ -1,0 +1,6 @@
+The tables inside data.json (VP8EntropyCost, VP8LevelCodes, VP8CoeffsProba0) and the computation in make_data.py follow
+libwebp 1.6.0 (src/enc/cost_enc.c, src/enc/tree_enc.c): Copyright 2010 Google LLC, BSD 3-Clause license,
+https://chromium.googlesource.com/webm/libwebp/+/refs/heads/main/COPYING
+
+index.html, README.md and make_data.py: MIT license, Copyright (c) 2026 Todd Tanner.
+levelcost_while.wgsl is the output of SpawnDev.ILGPU (a kernel of SpawnDev.Codecs, MIT).
